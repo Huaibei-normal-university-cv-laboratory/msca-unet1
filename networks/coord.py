@@ -13,7 +13,7 @@ class h_sigmoid(nn.Module):
         return self.relu(x + 3) / 6
 
 
-class h_swish(nn.Module):
+class h_swish(nn.Module): 
     def __init__(self, inplace=True):
         super(h_swish, self).__init__()
         self.sigmoid = h_sigmoid(inplace=inplace)
