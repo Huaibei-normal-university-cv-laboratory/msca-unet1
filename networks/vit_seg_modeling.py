@@ -19,7 +19,7 @@ from torch.nn.modules.utils import _pair
 from scipy import ndimage
 from . import vit_seg_configs as configs
 from .vit_seg_modeling_resnet_skip import ResNetV2
-from .coord import  CPM
+from .coord import CPM
 from fastai.vision.all import *
 import copy
 logger = logging.getLogger(__name__)
