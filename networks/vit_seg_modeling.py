@@ -282,45 +282,6 @@ class Conv2dReLU(nn.Sequential):
 
         super(Conv2dReLU, self).__init__(conv, bn, relu)
 
-
-# class DecoderBlock(nn.Module):
-#     def __init__(
-#             self,
-#             in_channels,
-#             out_channels,
-#             skip_channels=0,
-#             use_batchnorm=True,
-#     ):
-#         super().__init__()
-#         self.conv1 = Conv2dReLU(
-#             in_channels + skip_channels,
-#             out_channels,
-#             kernel_size=3,
-#             padding=1,
-#             use_batchnorm=use_batchnorm,
-#         )
-#         self.conv2 = Conv2dReLU(
-#             out_channels,
-#             out_channels,
-#             kernel_size=3,
-#             padding=1,
-#             use_batchnorm=use_batchnorm,
-#         )
-#         self.up = nn.UpsamplingBilinear2d(scale_factor=2)
-#         self.coord=CoordAtt(out_channels,out_channels)
-#         self.shuf = PixelShuffle_ICNR(in_channels)
-#
-#
-#     def forward(self, x, skip=None):
-#         x = self.up(x)
-#         if skip is not None:
-#               x = torch.cat([x, skip], dim=1)
-#         x = self.conv1(x)
-#         x = self.coord(x)
-#         x = self.conv2(x)
-#
-#         return x
-
 class DecoderBlock(nn.Module):
     def __init__(
             self,
@@ -345,7 +306,7 @@ class DecoderBlock(nn.Module):
             use_batchnorm=use_batchnorm,
         )
         self.up = nn.UpsamplingBilinear2d(scale_factor=2)
-        self.coord=CoordAtt(out_channels,out_channels)
+        self.cpm=CPM(out_channels,out_channels)
         self.spat = SpatialAttention(kernel_size=7)
         # self.att=Attention_block(F_g=in_channels, F_l=skip_channels, F_int=in_channels/2)
         # self.fusion=Fusion(in_dim=in_channels)
@@ -360,7 +321,7 @@ class DecoderBlock(nn.Module):
 
         x = self.conv1(x)
         x = self.conv2(x)
-        x=self.coord(x)
+        x=self.cpm(x)
         weight = self.spat(x)
         x = x * weight
 
@@ -380,13 +341,13 @@ class SpatialAttention(nn.Module):
         output = self.sigmoid(output)
         return output
 
-class LRASPPHead(nn.Module):
+class MSSH(nn.Module):
     def __init__(self,
                  low_channels: int,
                  high_channels: int,
                  num_classes: int,
                  inter_channels: int) -> None:
-        super(LRASPPHead, self).__init__()
+        super(MSSH, self).__init__()
         self.cbr = nn.Sequential(
             nn.Conv2d(high_channels, inter_channels, 1, bias=False),
             nn.BatchNorm2d(inter_channels),
@@ -398,8 +359,8 @@ class LRASPPHead(nn.Module):
             nn.Sigmoid()
         )
         self.spatial_attention = SpatialAttention(kernel_size=7)
-        self.low_classifier = nn.Conv2d(low_channels, num_classes, 1)    #��lraspp����1/16�Ǹ��ֲ�
-        self.high_classifier = nn.Conv2d(inter_channels, num_classes, 1)    #��lraspp���1/8�Ǹ��ֲ�
+        self.low_classifier = nn.Conv2d(low_channels, num_classes, 1)    
+        self.high_classifier = nn.Conv2d(inter_channels, num_classes, 1)   
 
     def forward(self, inputs: Dict[str, Tensor]) -> Tensor:
         low = inputs["low"]
@@ -409,26 +370,19 @@ class LRASPPHead(nn.Module):
         s = self.scale(high)
         x = x * s
         # x = self.cbr(x)
-        sa = self.spatial_attention(x)     #��seģ������ִ�������һ���ռ�ע����
+        sa = self.spatial_attention(x)    
         x = x * sa
-        x = F.interpolate(x, size=low.shape[-2:], mode="bilinear", align_corners=False) #shape[-2:]���ǵ����ڶ�ά�����һά
+        x = F.interpolate(x, size=low.shape[-2:], mode="bilinear", align_corners=False) 
         y = self.low_classifier(low) + self.high_classifier(x)
         y = F.interpolate(y, scale_factor=2 , mode="bilinear", align_corners=False)
         return y
-
-# class SegmentationHead(nn.Sequential):
-#
-#     def __init__(self, in_channels, out_channels, kernel_size=3, upsampling=1):
-#         conv2d = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=kernel_size // 2)
-#         upsampling = nn.UpsamplingBilinear2d(scale_factor=upsampling) if upsampling > 1 else nn.Identity()
-#         super().__init__(conv2d, upsampling)
 
 ####################################################################################
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class SE_Block(nn.Module):                         # Squeeze-and-Excitation block
+class SE_Block(nn.Module):                      
     def __init__(self, in_planes):
         super(SE_Block, self).__init__()
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
@@ -446,9 +400,9 @@ class SE_Block(nn.Module):                         # Squeeze-and-Excitation bloc
         return out
 
 
-class SE_ASPP(nn.Module):                       ##加入通道注意力机�?    
+class MSCA(nn.Module):                     
     def __init__(self, dim_in, dim_out, rate=1, bn_mom=0.1):
-        super(SE_ASPP, self).__init__()
+        super(MSCA, self).__init__()
         self.branch1 = nn.Sequential(
             nn.Conv2d(dim_in, dim_out, 1, 1, padding=0, dilation=rate, bias=True),
             nn.BatchNorm2d(dim_out, momentum=bn_mom),
@@ -497,7 +451,7 @@ class SE_ASPP(nn.Module):                       ##加入通道注意力机�?
 
         feature_cat = torch.cat([conv1x1, conv3x3_1, conv3x3_2, conv3x3_3, global_feature], dim=1)
         # print('feature:',feature_cat.shape)
-        seaspp1=self.senet(feature_cat)             #加入通道注意力机�?        # print('seaspp1:',seaspp1.shape)
+        seaspp1=self.senet(feature_cat)            
         se_feature_cat=seaspp1*feature_cat
         result = self.conv_cat(se_feature_cat)
         # print('result:',result.shape)
@@ -727,7 +681,7 @@ class DecoderCup(nn.Module):
             DecoderBlock(in_ch, out_ch, sk_ch) for in_ch, out_ch, sk_ch in zip(in_channels, out_channels, skip_channels)
         ]
         self.blocks = nn.ModuleList(blocks)
-        self.ca=SE_ASPP(dim_in=512,dim_out=512)
+        self.ca=MSCA(dim_in=512,dim_out=512)
 
 
     def forward(self, hidden_states, features=None):
@@ -768,7 +722,7 @@ class VisionTransformer(nn.Module):
         self.classifier = config.classifier
         self.transformer = Transformer(config, img_size, vis)
         self.decoder = DecoderCup(config)
-        self.segmentation_head = LRASPPHead(
+        self.segmentation_head = MSSH(
             low_channels=64,
             high_channels=128,
             num_classes=9,
